@@ -31,58 +31,68 @@ library(readxl)
 
 #load source files
 
+#user functions
+toDate <- function(year, month, day) {
+    ISOdate(year, month, day)
+}
 ```
 
-## R Markdown
+##Summary
 
 <placeholder>
-```{r cars}
+```{r summary_and_load}
 
 # read in data -------
   df1.activity <- read_excel(path="./Input/transfersDataLGH6Floor.xlsx", sheet = "data") 
-  # 
-  # entry_startDate <- min(df1.activity$beg_effective_date_id)
-  # entry_startDate <- max(df1.activity$beg_effective_date_id)
-  # departure_endDate <- min(df1.activity$end_effective_date_id)
-  # departure_endDate <- max(df1.activity$end_effective_date_id)
 
-# aggregate it to have entries by TOD, DOW and Date
+````
+
+## Entries
+
+
+```{r summary_and_load}
+
+  # aggregate it to have entries by TOD, DOW and Date
   df2.entries <- df1.activity %>%
-    group_by(beg_effective_date_id, beg_dow, beg_tod) %>%
+    group_by(beg_year, beg_month, beg_day, beg_dow, beg_tod) %>%
     summarize( entries =n_distinct(encntr_id))
   df2.entries <- df2.entries %>% ungroup()
+  df2.entries$entryDate <- toDate(df2.entries$beg_year, df2.entries$beg_month, df2.entries$beg_day)
+  
+  #shorten df Name
+  x <- df2.entries  
+  u_dates <- data.frame( entryDate = seq(min(x$entryDate), max(x$entryDate),  by = "1 day"), foo=1) #unique dates
+  u_hours <- data.frame( hours = seq(0, 23, 1), foo=1)
+  u_DOW   <- data.frame( DOW = seq(1, 7, 1), foo=1)
+  placeholder <- u_dates %>% left_join(u_hours, by="foo") %>% left_join(u_DOW, by="foo") %>% select(-foo)
+  placeholder$key <- apply( placeholder[, c("entryDate","hours","DOW")] , 1 , paste , collapse = "ZZ" ) #key for joinging 
+  x$key<- apply( x[, c("entryDate","beg_tod","beg_dow")] , 1 , paste , collapse = "ZZ" ) #key for joining
+  
+  #
+  placeholder <- placeholder %>%  
+    left_join( x, by="key", suffix=c("",".y")) %>% 
+    select(names(placeholder),"entries", -"key")
+  placeholder$entries[is.na(placeholder$entries)] <- 0  #set 0s
+  
+  #write.csv(placeholder, "./Wip/test.csv")
+  
+  
+````
 
-# aggregate it to have exists by TOD, DOW and Date
+## Departures
+
+
+```{r summary_and_load}
+  # aggregate it to have exists by TOD, DOW and Date
   df3.departures <- df1.activity %>%
-    group_by(end_effective_date_id, end_dow, end_tod) %>%
+    group_by(end_year, end_month, end_day, end_dow, end_tod) %>%
     summarize( entries =n_distinct(encntr_id))
   df3.departures <- df3.departures %>% ungroup()
+  df3.departures$departureDate <- toDate(df3.departures$end_year, df3.departures$end_month,df3.departures$end_day)
   
-#fill dates
-  fill_dates(df2.entries, beg_effective_date_id, entry_startDate, entry_endDate)
-
-  
-  #note who has ace service
-  index  <- which(x$Orig_ACE_Flag =="ACE") #ace patients
-  index2 <- which(x$Trans_ACE_Flag =="ACE") #ace patients
-  x$OrigService[index] <- paste0("ACE-", x$OrigService[index])
-  x$TransService[index2] <- paste0("ACE-", x$TransService[index2])
-  
-  #remove FP's without sufficiently compelte data
-  y <- x %>% group_by( transFP,TransferDate ) %>% summarize( c = n(), fpStart = min(fiscalperiodstartdate), fpEnd = max(fiscalperiodenddate) )
-  y <- y %>% ungroup()
-  y <- y %>% group_by( transFP ) %>% summarize( c =n(), fpStart = min(fpStart), fpEnd = max(fpEnd) )
-  y$p_length = as.numeric(y$fpEnd-y$fpStart+1)
-  m_l <- min(y$transFP[which(y$c/y$p_length >=0.8)])
-  m_m <- max(y$transFP[which(y$c/y$p_length >=0.8)])
-  index3 <-  y$transFP[y$transFP >= m_l & y$transFP <= m_m]
-  index4 <- which(x$transFP %in% index3)
-  x <- x[index4,]
-
-  #aggregate up to service and drop columns and rename
-  x <- x %>%
-    group_by(transFY, transFP, TransferDoW, TransferHour, OrigService, TransService) %>%
-    summarize( NumTransfers = n())
+  #to add in 0s
+  u_dates <- seq(min(df3.departures$as.Date(end_date),
+                                               by = "1 day"))
   
   #create an all combos data set to facilitate identification of 0 transfers in combo
   #list of dimensions for the combos
