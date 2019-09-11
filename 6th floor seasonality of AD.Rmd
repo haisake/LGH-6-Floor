@@ -1,0 +1,136 @@
+---
+title: "LGH 6th floor seasonality of AD"
+author: "Hans Aisake"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#move to a main file later I guess
+#set library and working directories
+libPath <-"H:/Hans/R Libraries"
+.libPaths(libPath) #set the library path
+
+#set WD
+wd <- "//vch.ca/departments/VCHDecisionSupport/Coastal_Richmond_SI/2019-08-28_LGH_6th-floor-transfers-seasonality"
+setwd(wd)
+
+library(odbc) #for database connections
+library(Rmarkdown)
+library(tidyverse)
+library(prophet)
+library(here)
+library(lubridate)
+library(readxl)
+
+# dsn_name <- "AISAKE-DENODO" #my OBDC denodo connection name
+# channel <- DBI::dbConnect(odbc::odbc(), dsn = dsn_name)
+# data <- dplyr::tbl(channel, dbplyr::in_schema("publish","activity_loc_room"))
+
+#load source files
+
+```
+
+## R Markdown
+
+<placeholder>
+```{r cars}
+
+data %>%
+    dplyr::filter(  facility_short_name ='LGH',  
+              beg_effective_date_id >= 20190601,
+              beg_effective_date_id <= 20190630,
+              nursing_unit_short_desc %in% 'LGH 6W') %>%
+  
+  dplyr::select(beg_effective_date_id,
+              nursing_unit_short_desc,
+              facility_short_name) %>%  # show_query()
+  
+#+ data 
+# read in data -------
+df1.activity <- 
+  read_excel(here::here("Input", 
+                      file="transfersDataLGH6Floor.xlsx"
+                      , sheet = "data")) 
+
+# %>% 
+# 
+#   mutate(censusdate = mdy(censusdate), 
+#          NursingUnitDesc = as.factor(NursingUnitDesc))
+
+
+df2.6e <- 
+  df1.census_daily %>% 
+  filter(NursingUnitDesc == "LGH 6E") %>% 
+  select(censusdate, 
+         Census) %>% 
+  rename(ds = censusdate, 
+         y = Census)
+
+
+df3.6w <- 
+  df1.census_daily %>% 
+  filter(NursingUnitDesc == "LGH 6W") %>% 
+  select(censusdate, 
+         Census) %>% 
+  rename(ds = censusdate, 
+         y = Census)
+
+df4.sco <- 
+  df1.census_daily %>% 
+  filter(NursingUnitDesc == "LGH SCO") %>% 
+  select(censusdate, 
+         Census) %>% 
+  rename(ds = censusdate, 
+         y = Census)
+
+
+#+ models ----
+
+#' ## Fit model for LGH 6E 
+m1 <- prophet(df2.6e)
+
+future <- make_future_dataframe(m1, 
+                                periods = 10,
+                                freq = "day")  
+
+fcast <- predict(m1, future)
+
+# plots 
+plot(m1, fcast)
+prophet_plot_components(m1, fcast)
+
+
+
+
+
+#' ## Fit model for LGH 6W
+m2 <- prophet(df3.6w)
+
+future <- make_future_dataframe(m2, 
+                                periods = 10,
+                                freq = "day")  
+
+fcast <- predict(m2, future)
+
+# plots 
+plot(m2, fcast)
+prophet_plot_components(m2, fcast)
+
+
+
+
+#' ## Fit model for LGH SCO
+m3 <- prophet(df4.sco)
+
+future <- make_future_dataframe(m3, 
+                                periods = 10,
+                                freq = "day")  
+
+fcast <- predict(m3, future)
+
+# plots 
+plot(m3, fcast)
+prophet_plot_components(m3, fcast)
