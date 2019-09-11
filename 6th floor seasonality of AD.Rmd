@@ -38,36 +38,73 @@ library(readxl)
 <placeholder>
 ```{r cars}
 
-data %>%
-    dplyr::filter(  facility_short_name ='LGH',  
-              beg_effective_date_id >= 20190601,
-              beg_effective_date_id <= 20190630,
-              nursing_unit_short_desc %in% 'LGH 6W') %>%
-  
-  dplyr::select(beg_effective_date_id,
-              nursing_unit_short_desc,
-              facility_short_name) %>%  # show_query()
-  
-#+ data 
 # read in data -------
-df1.activity <- 
-  read_excel(here::here("Input", 
-                      file="transfersDataLGH6Floor.xlsx"
-                      , sheet = "data")) 
+  df1.activity <- read_excel(path="./Input/transfersDataLGH6Floor.xlsx", sheet = "data") 
+  # 
+  # entry_startDate <- min(df1.activity$beg_effective_date_id)
+  # entry_startDate <- max(df1.activity$beg_effective_date_id)
+  # departure_endDate <- min(df1.activity$end_effective_date_id)
+  # departure_endDate <- max(df1.activity$end_effective_date_id)
 
-# %>% 
-# 
-#   mutate(censusdate = mdy(censusdate), 
-#          NursingUnitDesc = as.factor(NursingUnitDesc))
+# aggregate it to have entries by TOD, DOW and Date
+  df2.entries <- df1.activity %>%
+    group_by(beg_effective_date_id, beg_dow, beg_tod) %>%
+    summarize( entries =n_distinct(encntr_id))
+  df2.entries <- df2.entries %>% ungroup()
 
+# aggregate it to have exists by TOD, DOW and Date
+  df3.departures <- df1.activity %>%
+    group_by(end_effective_date_id, end_dow, end_tod) %>%
+    summarize( entries =n_distinct(encntr_id))
+  df3.departures <- df3.departures %>% ungroup()
+  
+#fill dates
+  fill_dates(df2.entries, beg_effective_date_id, entry_startDate, entry_endDate)
 
-df2.6e <- 
-  df1.census_daily %>% 
-  filter(NursingUnitDesc == "LGH 6E") %>% 
-  select(censusdate, 
-         Census) %>% 
-  rename(ds = censusdate, 
-         y = Census)
+  
+  #note who has ace service
+  index  <- which(x$Orig_ACE_Flag =="ACE") #ace patients
+  index2 <- which(x$Trans_ACE_Flag =="ACE") #ace patients
+  x$OrigService[index] <- paste0("ACE-", x$OrigService[index])
+  x$TransService[index2] <- paste0("ACE-", x$TransService[index2])
+  
+  #remove FP's without sufficiently compelte data
+  y <- x %>% group_by( transFP,TransferDate ) %>% summarize( c = n(), fpStart = min(fiscalperiodstartdate), fpEnd = max(fiscalperiodenddate) )
+  y <- y %>% ungroup()
+  y <- y %>% group_by( transFP ) %>% summarize( c =n(), fpStart = min(fpStart), fpEnd = max(fpEnd) )
+  y$p_length = as.numeric(y$fpEnd-y$fpStart+1)
+  m_l <- min(y$transFP[which(y$c/y$p_length >=0.8)])
+  m_m <- max(y$transFP[which(y$c/y$p_length >=0.8)])
+  index3 <-  y$transFP[y$transFP >= m_l & y$transFP <= m_m]
+  index4 <- which(x$transFP %in% index3)
+  x <- x[index4,]
+
+  #aggregate up to service and drop columns and rename
+  x <- x %>%
+    group_by(transFY, transFP, TransferDoW, TransferHour, OrigService, TransService) %>%
+    summarize( NumTransfers = n())
+  
+  #create an all combos data set to facilitate identification of 0 transfers in combo
+  #list of dimensions for the combos
+  p = data.frame( transFP = unique( x$transFP), foo=1)
+  q = data.frame( TransferDoW = unique( x$TransferDoW), foo=1)
+  r = data.frame( TransferHour = unique( x$TransferHour), foo=1)
+  s = data.frame( OrigService = as.character(unique( x$OrigService)), foo=1)
+  t = data.frame( TransService = as.character(unique( x$TransService)), foo=1)
+  placeholder <- p %>% left_join(q, by="foo") %>% left_join(r, by="foo") %>% left_join(s, by="foo") %>% left_join(t, by="foo") %>% select(-foo)
+
+  #need a column to join on so we have to make a unique dummy column for DPLYR
+  placeholder$key <-apply( placeholder , 1 , paste , collapse = "ZZ" )
+  x$key <- apply( x[, c("transFP","TransferDoW","TransferHour","OrigService","TransService")] , 1 , paste , collapse = "ZZ" )
+  
+  #combine the all combos palceholder with the observed values
+  placeholder <- placeholder %>%  
+    left_join( x, by="key", suffix=c("",".y")) %>% 
+    select(names(placeholder),"NumTransfers", -"key")
+  placeholder$NumTransfers[is.na(placeholder$NumTransfers)] <- 0  #set 0s
+  dataList$capplanTransfer_df <- placeholder #put the result into the data list
+ 
+
 
 
 df3.6w <- 
