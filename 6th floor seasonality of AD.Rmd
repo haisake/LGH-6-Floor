@@ -19,165 +19,172 @@ setwd(wd)
 
 library(odbc) #for database connections
 library(Rmarkdown)
+library(dplyr)
 library(tidyverse)
 library(prophet)
-library(here)
 library(lubridate)
 library(readxl)
+library(tidyverse)
+library(here)
+library(DBI)
+library(ggbeeswarm)
+library(DT)
+library(broom)
+library(caret)
+library(kableExtra)
+library(scales)
+
+knitr::opts_chunk$set(dev = "png", cache = TRUE)
 
 # dsn_name <- "AISAKE-DENODO" #my OBDC denodo connection name
 # channel <- DBI::dbConnect(odbc::odbc(), dsn = dsn_name)
 # data <- dplyr::tbl(channel, dbplyr::in_schema("publish","activity_loc_room"))
 
 #load source files
+source("./LGH-6-Floor/processData.R")
 
-#user functions
-toDate <- function(year, month, day) {
-    ISOdate(year, month, day)
-}
 ```
 
-##Summary
+#' ## Data
 
-<placeholder>
-```{r summary_and_load}
+````{r data, include=TRUE}
+str(data)
 
-# read in data -------
-  df1.activity <- read_excel(path="./Input/transfersDataLGH6Floor.xlsx", sheet = "data") 
+````{r loadData, echo=FALSE}
+ #read in data from Excel extracted via DBVisualizer
+  df1.activity <- read_excel(path="./Input/transfersDataLGH6Floor.xlsx", sheet = "data")
+
+  df2.entries <- processData(df1.activity,"begin") #turn into the required data type
+  df3.departures <- processData(df1.activity,"end") #turn into the required data type
+````
+
+#' ## Exploratory Plots
+
+````{r exploratory plots}
+
+df2.entries %>% 
+  ggplot(aes(x = year, 
+             y = entries)) + 
+  geom_boxplot() + 
+  facet_wrap(~dow) + 
+  theme_light() +
+  theme(panel.grid.minor = element_line(colour = "grey95"), 
+        panel.grid.major = element_line(colour = "grey95"),
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1)) +
+  labs(title ="Histogram of entries on the LGH 6th floor by DOW  2018-05-01 to 2019-09-11")
+
+df2.entries %>% 
+  ggplot(aes(x = tod, 
+             y = entries)) + 
+  geom_boxplot() + 
+  theme_light() +
+  theme(panel.grid.minor = element_line(colour = "grey95"), 
+        panel.grid.major = element_line(colour = "grey95"),
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1)) +
+  labs(title ="Histogram of entries on the LGH 6th floor by TOD 2018-05-01 to 2019-09-11")
+
+
+df2.entries %>% 
+  ggplot(aes(x = entries)) + 
+  geom_bar() + 
+  facet_wrap(~year) + 
+  theme_light() +
+  theme(panel.grid.minor = element_line(colour = "grey95"), 
+        panel.grid.major = element_line(colour = "grey95"),
+        axis.text.x = element_text(angle = 45, 
+                                   hjust = 1))
+
 
 ````
 
-## Entries
-
-
 ```{r summary_and_load}
+# 
+# fit2019 <- 
+#   df2.entries %>% 
+#   filter(year == 2019) %>% 
+#   pull(entries) %>% 
+#   fitdistrplus::fitdist("norm")
+#   
+# # str(fit2019)
+# summary(fit2019)
 
-  # aggregate it to have entries by TOD, DOW and Date
-  df2.entries <- df1.activity %>%
-    group_by(beg_year, beg_month, beg_day, beg_dow, beg_tod) %>%
-    summarize( entries =n_distinct(encntr_id))
-  df2.entries <- df2.entries %>% ungroup()
-  df2.entries$entryDate <- toDate(df2.entries$beg_year, df2.entries$beg_month, df2.entries$beg_day)
+#not normally distributed there are definitely explanatories???
+# plot(fit2019)
+
+
+  x <- df2.entries %>% group_by(tod) %>% summarize(avg_entries = mean(entries), sd_entries = sd(entries), numTransfers = sum(entries))
+  y <- df3.departures %>% group_by(tod) %>% summarize(avg_departures = mean(departures), sd_departures = sd(departures), numTransfers = sum(departures))
+
+#+ models entries----  
+
+  #split the data into a training and test set
+  df2.entries$id <- 1:nrow(df2.entries)
+  train <- df2.entries %>% dplyr::sample_frac(.75)
+  test  <- dplyr::anti_join(df2.entries, train, by = 'id')
+
+  ###########
+  # Model 1
+  ###########
+  m1 = lm(data=train, entries ~year+ month+ tod + dow)
+  summary(m1)  #rsquared 0.4195  , RMSE 0.8006
+  predictions_m1 <- data.frame(predicted = predict(m1,newdata = test), test)
+  m1.test_rmse <- sqrt(mean((predictions_m1$predicted - predictions_m1$entries)^2, na.rm = TRUE)) #0.7834701
+  #model is not over fitting
   
-  #shorten df Name
-  x <- df2.entries  
-  u_dates <- data.frame( entryDate = seq(min(x$entryDate), max(x$entryDate),  by = "1 day"), foo=1) #unique dates
-  u_hours <- data.frame( hours = seq(0, 23, 1), foo=1)
-  u_DOW   <- data.frame( DOW = seq(1, 7, 1), foo=1)
-  placeholder <- u_dates %>% left_join(u_hours, by="foo") %>% left_join(u_DOW, by="foo") %>% select(-foo)
-  placeholder$key <- apply( placeholder[, c("entryDate","hours","DOW")] , 1 , paste , collapse = "ZZ" ) #key for joinging 
-  x$key<- apply( x[, c("entryDate","beg_tod","beg_dow")] , 1 , paste , collapse = "ZZ" ) #key for joining
+  ###########
+  # Model 2
+  ###########  
+  m2 = lm(data=train, entries ~year+ month+ tod + dow + tod:dow)
+  summary(m2)  #rsquared 0.4549  , RMSE 0.7758
+  predictions_m2 <- data.frame(predicted = predict(m2,newdata = test), test)
+  m2.test_rmse <- sqrt(mean((predictions_m2$predicted - predictions_m2$entries)^2, na.rm = TRUE)) ??0.766701
+  #model is not over fitting
+
+  ##########
+  # Model 1 seams to be simpler and just as good as Model 2. Going with model 1. Apply to all data
+  #########
+  m1 = lm(data=df2.entries, entries ~year+ month+ tod + dow)
+  temp <- summary(m1)  #rsquared 0.4207  , RMSE 0.7958
   
-  #
-  placeholder <- placeholder %>%  
-    left_join( x, by="key", suffix=c("",".y")) %>% 
-    select(names(placeholder),"entries", -"key")
-  placeholder$entries[is.na(placeholder$entries)] <- 0  #set 0s
+  #generate the point with line charts
+  df.coeff <- as.data.frame( temp$coefficients )
+  df.coeff$lower <- df.coeff$Estimate-2*df.coeff$`Std. Error`
+  df.coeff$upper <- df.coeff$Estimate+2*df.coeff$`Std. Error`
   
-  #write.csv(placeholder, "./Wip/test.csv")
+
+#+ models departures----  
+  
+  ###### Departures
+  #split the data into a training and test set
+  df3.departures$id <- 1:nrow(df3.departures)
+  train <- df3.departures %>% dplyr::sample_frac(.75)
+  test  <- dplyr::anti_join(df3.departures, train, by = 'id')
+
+  ###########
+  # Model 1
+  ###########
+  m1 = lm(data=train, departures ~year+ month+ tod + dow)
+  summary(m1)  #rsquared 0.4973  , RMSE 0.8586
+  predictions_m1 <- data.frame(predicted = predict(m1,newdata = test), test)
+  m1.test_rmse <- sqrt(mean((predictions_m1$predicted - predictions_m1$departures)^2, na.rm = TRUE)) #0.8680379
+  #model is not over fitting???
+  
+  ###########
+  # Model 2
+  ###########  
+  m2 = lm(data=train, departures ~year+ month+ tod + dow + tod:dow)
+  summary(m2)  #rsquared 0.5229  , RMSE 0.8364
+  predictions_m2 <- data.frame(predicted = predict(m2,newdata = test), test)
+  m2.test_rmse <- sqrt(mean((predictions_m2$predicted - predictions_m2$departures)^2, na.rm = TRUE)) #0.8484416
+  #model is not over fitting
+
+  ##########
+  # Model 1 seams to be simpler and just as good as Model 2. Going with model 1. Apply to all data
+  #########
+  m1 = lm(data=df3.departures, departures ~year+ month+ tod + dow)
+  temp <- summary(m1)  #rsquared 0.4207  , RMSE 0.7958
   
   
-````
-
-## Departures
-
-
-```{r summary_and_load}
-  # aggregate it to have exists by TOD, DOW and Date
-  df3.departures <- df1.activity %>%
-    group_by(end_year, end_month, end_day, end_dow, end_tod) %>%
-    summarize( entries =n_distinct(encntr_id))
-  df3.departures <- df3.departures %>% ungroup()
-  df3.departures$departureDate <- toDate(df3.departures$end_year, df3.departures$end_month,df3.departures$end_day)
   
-  #to add in 0s
-  u_dates <- seq(min(df3.departures$as.Date(end_date),
-                                               by = "1 day"))
-  
-  #create an all combos data set to facilitate identification of 0 transfers in combo
-  #list of dimensions for the combos
-  p = data.frame( transFP = unique( x$transFP), foo=1)
-  q = data.frame( TransferDoW = unique( x$TransferDoW), foo=1)
-  r = data.frame( TransferHour = unique( x$TransferHour), foo=1)
-  s = data.frame( OrigService = as.character(unique( x$OrigService)), foo=1)
-  t = data.frame( TransService = as.character(unique( x$TransService)), foo=1)
-  placeholder <- p %>% left_join(q, by="foo") %>% left_join(r, by="foo") %>% left_join(s, by="foo") %>% left_join(t, by="foo") %>% select(-foo)
-
-  #need a column to join on so we have to make a unique dummy column for DPLYR
-  placeholder$key <-apply( placeholder , 1 , paste , collapse = "ZZ" )
-  x$key <- apply( x[, c("transFP","TransferDoW","TransferHour","OrigService","TransService")] , 1 , paste , collapse = "ZZ" )
-  
-  #combine the all combos palceholder with the observed values
-  placeholder <- placeholder %>%  
-    left_join( x, by="key", suffix=c("",".y")) %>% 
-    select(names(placeholder),"NumTransfers", -"key")
-  placeholder$NumTransfers[is.na(placeholder$NumTransfers)] <- 0  #set 0s
-  dataList$capplanTransfer_df <- placeholder #put the result into the data list
- 
-
-
-
-df3.6w <- 
-  df1.census_daily %>% 
-  filter(NursingUnitDesc == "LGH 6W") %>% 
-  select(censusdate, 
-         Census) %>% 
-  rename(ds = censusdate, 
-         y = Census)
-
-df4.sco <- 
-  df1.census_daily %>% 
-  filter(NursingUnitDesc == "LGH SCO") %>% 
-  select(censusdate, 
-         Census) %>% 
-  rename(ds = censusdate, 
-         y = Census)
-
-
-#+ models ----
-
-#' ## Fit model for LGH 6E 
-m1 <- prophet(df2.6e)
-
-future <- make_future_dataframe(m1, 
-                                periods = 10,
-                                freq = "day")  
-
-fcast <- predict(m1, future)
-
-# plots 
-plot(m1, fcast)
-prophet_plot_components(m1, fcast)
-
-
-
-
-
-#' ## Fit model for LGH 6W
-m2 <- prophet(df3.6w)
-
-future <- make_future_dataframe(m2, 
-                                periods = 10,
-                                freq = "day")  
-
-fcast <- predict(m2, future)
-
-# plots 
-plot(m2, fcast)
-prophet_plot_components(m2, fcast)
-
-
-
-
-#' ## Fit model for LGH SCO
-m3 <- prophet(df4.sco)
-
-future <- make_future_dataframe(m3, 
-                                periods = 10,
-                                freq = "day")  
-
-fcast <- predict(m3, future)
-
-# plots 
-plot(m3, fcast)
-prophet_plot_components(m3, fcast)
