@@ -48,7 +48,7 @@ source("./LGH-6-Floor/processData.R")
 #' ## Data
 
 ````{r data, include=TRUE}
-str(data)
+
 
 ````{r loadData, echo=FALSE}
  #read in data from Excel extracted via DBVisualizer
